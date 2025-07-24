@@ -17,7 +17,7 @@ public class WebConfig implements WebMvcConfigurer {
 	
 	@Override
 	public void addResourceHandlers(ResourceHandlerRegistry registry) {
-		registry.addResourceHandler("/upload/**") // 브라우저에서 접근할 경로를 설정
+		registry.addResourceHandler("/uploads/**") // 브라우저에서 접근할 경로를 설정
 												   // localhost:포트/uploads/파일명
 				.addResourceLocations("file:/home/git/upload"); //실제 서버에 저장할 경로
 	} 

@@ -1,6 +1,5 @@
 package com.smhrd.board.controller;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +16,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.multipart.MultipartFile;
+
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.model.CannedAccessControlList;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.smhrd.board.config.BucketConfig;
 import com.smhrd.board.config.FileUploadConfig;
 import com.smhrd.board.entity.BoardEntity;
 import com.smhrd.board.entity.UserEntity;
@@ -33,12 +38,15 @@ public class BoardController {
 	BoardService boardService;
 	
 	
-
+	private final BucketConfig bucketConfig;
+	private final AmazonS3 amazonS3;
     private final FileUploadConfig fileUploadConfig;
 
-    BoardController(FileUploadConfig fileUploadConfig) {
+    BoardController(FileUploadConfig fileUploadConfig, BucketConfig bucketConfig, AmazonS3 amazonS3) {
         this.fileUploadConfig = fileUploadConfig;
-       
+        this.bucketConfig = bucketConfig;
+        this.amazonS3 = amazonS3;
+      
     }
 
 	// 글쓰기 기능 구현
@@ -46,65 +54,34 @@ public class BoardController {
 	public String write(@RequestParam String title, @RequestParam String content, 
 			HttpSession session, @RequestParam MultipartFile image) {
 		
-		// 필요한 것 -> 제목, 작성자, 내용, 이미지 (생략:번호, 작성일)
-		// 작성자 : session에 담긴 값을 가지고 오는 방법
-		// 이미지 : 이미지 파일를 가지고 와서 서버에 저장
-		// -> 이미지 경로를 DB에 저장하기 위해 
-		//    --> 이미지를 서버에 저장(이미지 저장을 위한 환경설정 코드 작성)
-		
 		String imgPath = "";
 		
 		if(!image.isEmpty()) {
-			// 이미지의 이름 
 			String img_name =  image.getOriginalFilename();
-			
-			// java 안에 고유 번호를 만드는 객체 존재 -> UUID
-			// 이미지의 고유 이름 부여
+
 			String file_name = UUID.randomUUID() + "_" + img_name;
-			// random값_이미지 이름
-			
-			// C:/upload 폴더에 저장 할 예정
-			//-> 업로드할 경로를 변수로 가지고 오기
-			String uploadDir = fileUploadConfig.getUploadDir();
-			
-			// 예시-> C:/upload/123_1.jpg로 저장
-			String filePath = Paths.get(uploadDir, file_name).toString();
-			// uploadDir + file_name 으로 작성 시 OS에 따라 경로 못 잡음
-			
-			
-			
-			// 파일 경로 확인 후 이미지 저장
+		
 			try {
-				image.transferTo(new File(filePath));
-				
-				// 경로를 별도의 변수에 저장
-				imgPath = "/uploads/" + file_name;
-				
-			} catch (IllegalStateException e) {
-				e.printStackTrace();
+				ObjectMetadata metadata = new ObjectMetadata();
+		        metadata.setContentLength(image.getSize());
+		        metadata.setContentType(image.getContentType());
+
+		        PutObjectRequest request = new PutObjectRequest(bucketConfig.getbucketName(), file_name, image.getInputStream(), metadata)
+		                .withCannedAcl(CannedAccessControlList.PublicRead); // public 접근 허용
+
+		        amazonS3.putObject(request);
+		        imgPath = amazonS3.getUrl(bucketConfig.getbucketName(), file_name).toString();
 			
-			} catch(IOException e) {
+			}catch(Exception e) {
 				e.printStackTrace();
-			
 			}
 			
-			
-			// 경로를 별도의 변수에 저장
-			
-		}
-		
-		// DB 저장
-		// service 객체를 통해 
-		// BoardService -> BoardRepository
-		// save() 메서드 활용
-		
+		}	
 		BoardEntity entity = new BoardEntity();
 		entity.setTitle(title);
 		entity.setContent(content);
 		entity.setImgPath(imgPath);
 		
-		// writer -> session에서 가지고 오기 -> down casting
-		// 다운 캐스팅 : 
 		UserEntity user = (UserEntity) session.getAttribute("user");
 		
 		String writer = user.getUserId();
@@ -113,15 +90,13 @@ public class BoardController {
 		
 		BoardEntity result = boardService.write(entity);
 		if(result != null) {
-			// 성공
-			// 글이 작성이 될 시 index 페이지로 이동
+			
 			return "redirect:/";
 			
 		}else {
 			return "redirect:/board/write";
 		}
 		
-		// 글이 작성 될 시 index 페이지로 이동
 	
 	}
 	
@@ -130,10 +105,7 @@ public class BoardController {
 	public String detail(@PathVariable Long id, Model model) { // url의 변수 가지고 오는 법
 		System.out.println(id);
 		
-		// id를 바탕으로 select 진행
-		// 게시글의 상세 정보 출력
 		
-		// DB 접근 -> SERVICE 객체 기능 구현
 		Optional<BoardEntity> entity =  boardService.detail(id);
 		
 		model.addAttribute("detail", entity.get());
@@ -145,7 +117,7 @@ public class BoardController {
 	@GetMapping("/edit/{id}")
 	public String edit(@PathVariable Long id, Model model) {
 		
-		// id를 바탕으로 데이터 select
+	
 		Optional<BoardEntity> entity =  boardService.detail(id);
 		
 		model.addAttribute("edit", entity.get());
@@ -155,10 +127,8 @@ public class BoardController {
 	@PostMapping("/update")
 	public String update(@RequestParam Long id, @RequestParam String title,
 			@RequestParam String content, @RequestParam String oldImgPath, @RequestParam MultipartFile image) {
-		// 필요한 거 정의 -> title, id, content, imgPath 등
+
 		
-		
-		// 데이터 불러오기
 		Optional<BoardEntity> board =  boardService.detail(id);
 		BoardEntity entity = board.get();
 		
@@ -166,17 +136,12 @@ public class BoardController {
 		
 		// 새로운 이미지 저장 시 기존 이미지 삭제
 		if(!image.isEmpty()) {
-			// 기존 이미지가 있는지 여부 판단
 			if(oldImgPath != null && !oldImgPath.isEmpty()) {
-				// 삭제 -> 서버에서 이미지 삭제
 				
-				// 파일명만 남기는 코드
 				String oldFile = oldImgPath.replace("/upload/", ""); 
 				
-				// 서버에 저장되어 있는 경로 + 파일명을 찾아서 삭제
 				Path oldFilePath = Paths.get(uploadDir, oldFile);
 			
-				// 삭제코드
 				try {
 					Files.deleteIfExists(oldFilePath);
 				} catch (IOException e) {
@@ -203,14 +168,6 @@ public class BoardController {
 		entity.setTitle(title);
 		entity.setContent(content);
 		
-		// update문 실행
-		// JPA문에서 update문이 없는게 아니라 save()함수가 update문 실행
-		// save() -> 2가지
-		// save가 update문을 실행하는 조전
-		// findById() 데이터를 불러 오는 것 (select) 이후 데이터는 영속상태가 되는 것(수정상태)
-		// save 함수 사용 시 update 문을 실행
-		
-		// 복잡한 update문은 실행 -> @Query() 활용하여 update 실행
 		
 		boardService.write(entity);
 		return "redirect:/board/detail/" + id;
